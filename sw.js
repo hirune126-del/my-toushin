@@ -1,5 +1,5 @@
 // オフラインでも開けるようにするための Service Worker
-const VERSION = "v3";
+const VERSION = "v5";
 const SHELL = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => {

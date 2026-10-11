@@ -47,34 +47,44 @@ function png(size, pixel) {
   ]);
 }
 
-// 上昇する折れ線（マスカブル対応のため中央 60% に収める）
-const pts = [[0.24, 0.66], [0.40, 0.52], [0.52, 0.60], [0.76, 0.34]];
+// NAVIGATOR の「N」＋上向き矢印。N の文字が画像のちょうど中央に来るよう配置（マスカブル対応で中央 60% に収める）
+const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * Math.max(0, Math.min(1, t)));
 const segDist = (px, py, [ax, ay], [bx, by]) => {
   const dx = bx - ax, dy = by - ay;
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
   return Math.hypot(px - ax - t * dx, py - ay - t * dy);
 };
-const BG = [30, 64, 120], BG2 = [20, 44, 90], FG = [255, 255, 255], ACC = [120, 220, 170];
-const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
-
-function pixel(x, y, px) {
-  let c = mix(BG, BG2, y);
-  // 折れ線の下の塗り
-  for (let i = 0; i < pts.length - 1; i++) {
-    const [ax, ay] = pts[i], [bx, by] = pts[i + 1];
-    if (x >= ax && x <= bx) {
-      const ly = ay + ((x - ax) / (bx - ax)) * (by - ay);
-      if (y > ly && y < 0.74) c = mix(c, ACC, 0.22);
-    }
+const inPoly = (x, y, P) => {
+  let s = false;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const [xi, yi] = P[i], [xj, yj] = P[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) s = !s;
   }
+  return s;
+};
+const L = 0.34, R = 0.66, T = 0.34, B = 0.66; // 線の太さ込みで 0.295〜0.705 → 中心 0.5
+const N = [[L, B], [L, T], [R, B], [R, T]];
+const ARROW = [[R, T - 0.14], [R + 0.1, T + 0.01], [R - 0.1, T + 0.01]];
+
+function shade(x, y) {
+  let c = mix(hex("#0f766e"), hex("#1e3a8a"), (x + y) / 2);
   let d = Infinity;
-  for (let i = 0; i < pts.length - 1; i++) d = Math.min(d, segDist(x, y, pts[i], pts[i + 1]));
-  const w = 0.03;
-  const a = Math.max(0, Math.min(1, (w - d) / px + 0.5));
-  c = mix(c, FG, a);
-  const dot = Math.hypot(x - pts[3][0], y - pts[3][1]);
-  c = mix(c, ACC, Math.max(0, Math.min(1, (0.055 - dot) / px + 0.5)));
+  for (let i = 0; i < N.length - 1; i++) d = Math.min(d, segDist(x, y, N[i], N[i + 1]));
+  if (d < 0.045 || inPoly(x, y, ARROW)) c = hex("#ffffff");
   return c;
+}
+
+// 4x4 のスーパーサンプリングで輪郭をなめらかにする
+function pixel(x, y, px) {
+  const SS = 4;
+  let acc = [0, 0, 0];
+  for (let i = 0; i < SS; i++)
+    for (let j = 0; j < SS; j++) {
+      const c = shade(x + ((i + 0.5) / SS) * px, y + ((j + 0.5) / SS) * px);
+      acc = acc.map((v, k) => v + c[k]);
+    }
+  return acc.map((v) => Math.round(v / (SS * SS)));
 }
 
 for (const s of [192, 512, 180]) writeFileSync(join(OUT, `icon-${s}.png`), png(s, pixel));
