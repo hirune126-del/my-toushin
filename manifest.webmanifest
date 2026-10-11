@@ -1,6 +1,6 @@
 {
-  "name": "マイ投信ノート",
-  "short_name": "マイ投信",
+  "name": "NAVIGATOR",
+  "short_name": "NAVIGATOR",
   "description": "投資信託の保有評価額・ウォッチリスト・基準価額チャート",
   "lang": "ja",
   "start_url": "./#home",

@@ -193,3 +193,4 @@ textarea { min-height: 90px; resize: vertical; }
 .mstrip .k { font-size: 11px; color: var(--sub); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mstrip .v { font-weight: 700; font-size: 15px; font-variant-numeric: tabular-nums; }
 .mstrip .s { font-size: 12px; font-variant-numeric: tabular-nums; }
+.topbar h1.brand { letter-spacing: 0.14em; font-weight: 800; }

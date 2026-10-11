@@ -99,8 +99,9 @@ function positions() {
 const view = $("#view");
 const PALETTE = ["#2a62c4", "#1fa37a", "#e0902a", "#9a5bd1", "#d1495b", "#2bb3c0", "#7a8b2a", "#c45f9e"];
 
-function setChrome({ title = "マイ投信ノート", back = false, tab = null }) {
+function setChrome({ title = "NAVIGATOR", back = false, tab = null }) {
   $("#title").textContent = title;
+  $("#title").classList.toggle("brand", title === "NAVIGATOR");
   $("#backBtn").hidden = !back;
   $("#asof").textContent = D.date ? `${fmtDate(D.date)} 基準` : "";
   for (const a of document.querySelectorAll(".tabbar a")) a.classList.toggle("on", a.dataset.tab === tab);
