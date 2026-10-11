@@ -14,11 +14,12 @@ function save() {
 }
 
 // ---------- 基準価額データ ----------
-const D = { funds: new Map(), list: [], date: "", updated: "", navIndex: new Set(), navCache: new Map(), error: null };
+const D = { markets: [], mktCache: new Map(), funds: new Map(), list: [], date: "", updated: "", navIndex: new Set(), navCache: new Map(), error: null };
 
 async function loadData() {
   try {
-    const [fr, nr] = await Promise.all([fetch("data/funds.json"), fetch("data/nav/index.json")]);
+    const [fr, nr, mr] = await Promise.all([fetch("data/funds.json"), fetch("data/nav/index.json"), fetch("data/markets.json").catch(() => null)]);
+    if (mr?.ok) D.markets = (await mr.json()).markets;
     const fj = await fr.json();
     D.date = fj.date;
     D.updated = fj.updated;
@@ -115,7 +116,7 @@ function renderHome() {
   setChrome({ tab: "home" });
   const ps = positions().sort((a, b) => (b.value ?? 0) - (a.value ?? 0));
   if (!ps.length) {
-    view.innerHTML = `<div class="card empty"><p>保有ファンドがまだありません。</p>
+    view.innerHTML = `${marketStrip()}<div class="card empty"><p>保有ファンドがまだありません。</p>
       <p class="hint">検索からファンドを探して「保有を追加」してください。</p>
       <a class="btn" href="#search">ファンドを検索</a></div>`;
     return;
@@ -127,6 +128,7 @@ function renderHome() {
   const prev = total - day;
   const alloc = ps.filter((p) => p.value > 0);
   view.innerHTML = `
+    ${marketStrip()}
     <section class="card summary">
       <div class="label">評価額合計</div>
       <div class="big">${yen(total)}</div>
@@ -205,6 +207,66 @@ function renderSearch() {
   if (!lastQuery) q.focus();
 }
 
+// ---------- マーケット（株価指数・為替） ----------
+const HOME_MARKETS = ["N225", "DJI", "USDJPY"];
+
+function marketStrip() {
+  const ms = HOME_MARKETS.map((id) => D.markets.find((m) => m.id === id)).filter(Boolean);
+  if (!ms.length) return "";
+  return `<div class="mstrip">${ms
+    .map((m) => `<a href="#mkt/${m.id}"><span class="k">${esc(m.name)}</span><span class="v">${fmt(m.p, m.id === "USDJPY" ? 2 : 0)}</span><span class="s ${cls(m.ch)}">${pct(m.r)}</span></a>`)
+    .join("")}</div>`;
+}
+
+function renderMarket() {
+  setChrome({ tab: "market" });
+  if (!D.markets.length) {
+    view.innerHTML = `<div class="card empty">株価指数・為替のデータを取得できませんでした。次回の更新をお待ちください。</div>`;
+    return;
+  }
+  view.innerHTML = `<div class="section-title">株価指数・為替</div>
+    <div class="list">${D.markets
+      .map(
+        (m) => `<a class="item" href="#mkt/${m.id}">
+        <div class="main"><div class="name">${esc(m.name)}</div><div class="meta">${fmtDate(m.d)}</div></div>
+        <div class="right"><div class="v">${fmt(m.p, m.dec)}${esc(m.unit)}</div>
+        <div class="s ${cls(m.ch)}">${signed(m.ch, m.dec)} (${pct(m.r)})</div></div></a>`
+      )
+      .join("")}</div>
+    <p class="hint">データ：Yahoo Finance（平日 21:30・翌朝 7:30 更新。リアルタイムではありません）</p>`;
+}
+
+async function renderMarketDetail(id) {
+  const m = D.markets.find((x) => x.id === id);
+  setChrome({ title: "マーケット", back: true });
+  if (!m) {
+    view.innerHTML = `<div class="card empty">データが見つかりません</div>`;
+    return;
+  }
+  view.innerHTML = `
+    <section class="card fund-head">
+      <div class="name">${esc(m.name)}</div>
+      <div class="price">${fmt(m.p, m.dec)}<small>${esc(m.unit)}</small></div>
+      <div class="chg ${cls(m.ch)}">前日比 ${signed(m.ch, m.dec)}${esc(m.unit)}（${pct(m.r)}）</div>
+      <div class="hint" style="margin-left:0">${fmtDate(m.d)} 時点</div>
+    </section>
+    <section class="card"><h2>チャート</h2><div id="chart"><div class="loading">読み込み中…</div></div></section>`;
+  let rows = D.mktCache.get(id);
+  if (!rows) {
+    try {
+      const r = await fetch(`data/mkt/${id}.json`);
+      rows = r.ok ? await r.json() : null;
+    } catch {}
+    if (rows) D.mktCache.set(id, rows);
+  }
+  if (location.hash !== `#mkt/${id}`) return;
+  if (!rows) {
+    $("#chart").innerHTML = `<p class="hint">チャートデータを読み込めませんでした</p>`;
+    return;
+  }
+  chartBox($("#chart"), rows, null, m.dec, m.unit);
+}
+
 const RANGES = [["1M", 1], ["3M", 3], ["6M", 6], ["1Y", 12], ["3Y", 36], ["5Y", 60], ["全", 0]];
 
 async function renderFund(code) {
@@ -264,6 +326,11 @@ async function renderFund(code) {
   }
   // 最新の基準価額が履歴より新しければ末尾に足す
   if (f.p != null && f.d > rows[rows.length - 1][0]) rows = [...rows, [f.d, f.p]];
+  chartBox(box, rows, pos?.avgCost);
+}
+
+// 期間切り替えボタンつきのチャート
+function chartBox(box, rows, cost, dec = 0, unit = "円") {
   const range = S.prefs.range ?? 12;
   box.innerHTML = `<div class="ranges">${RANGES.map(([l, m]) => `<button data-m="${m}" class="${m === range ? "on" : ""}">${l}</button>`).join("")}</div>
     <div class="chart-info" id="cinfo"></div><div class="chart-wrap" id="cwrap"></div>`;
@@ -275,7 +342,7 @@ async function renderFund(code) {
       const from = d.toISOString().slice(0, 10);
       r = rows.filter((x) => x[0] >= from);
     }
-    drawChart($("#cwrap"), $("#cinfo"), r, pos?.avgCost);
+    drawChart($("#cwrap"), $("#cinfo"), r, cost, dec, unit);
   };
   box.querySelector(".ranges").addEventListener("click", (e) => {
     const b = e.target.closest("button");
@@ -314,7 +381,7 @@ function holdingsCard(p) {
   </section>`;
 }
 
-function drawChart(wrap, info, rows, cost) {
+function drawChart(wrap, info, rows, cost, dec = 0, unit = "円") {
   if (rows.length < 2) {
     wrap.innerHTML = `<p class="hint">この期間のデータが足りません</p>`;
     info.innerHTML = "";
@@ -330,10 +397,11 @@ function drawChart(wrap, info, rows, cost) {
   const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
   const pts = rows.map((r, i) => `${x(i).toFixed(1)},${y(r[1]).toFixed(1)}`);
   const ticks = niceTicks(lo, hi, 4);
+  const tdec = [0, 1, 2].find((d) => ticks.every((t) => Math.abs(t * 10 ** d - Math.round(t * 10 ** d)) < 1e-6)) ?? 2;
   const first = rows[0], last = rows[rows.length - 1];
   const chgAll = ((last[1] - first[1]) / first[1]) * 100;
   wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="基準価額チャート">
-    ${ticks.map((t) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/><text class="axis" x="${W - R + 6}" y="${y(t) + 4}">${fmt(t)}</text>`).join("")}
+    ${ticks.map((t) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/><text class="axis" x="${W - R + 6}" y="${y(t) + 4}">${fmt(t, tdec)}</text>`).join("")}
     <path class="area" d="M${x(0)},${H - B} L${pts.join(" L")} L${x(rows.length - 1)},${H - B} Z"/>
     <polyline class="line" points="${pts.join(" ")}"/>
     ${cost && cost > lo && cost < hi ? `<line class="cost" x1="${L}" x2="${W - R}" y1="${y(cost)}" y2="${y(cost)}"/><text class="axis" x="${L + 4}" y="${y(cost) - 5}" style="fill:var(--minus)">取得単価 ${fmt(cost)}</text>` : ""}
@@ -353,7 +421,7 @@ function drawChart(wrap, info, rows, cost) {
     cur.setAttribute("x1", x(i)); cur.setAttribute("x2", x(i)); cur.setAttribute("visibility", "visible");
     dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(v)); dot.setAttribute("visibility", "visible");
     const c = ((v - first[1]) / first[1]) * 100;
-    info.innerHTML = `<span>${fmtDate(d)}　<b>${fmt(v)}円</b></span><span class="${cls(c)}">${pct(c)}</span>`;
+    info.innerHTML = `<span>${fmtDate(d)}　<b>${fmt(v, dec)}${unit}</b></span><span class="${cls(c)}">${pct(c)}</span>`;
   };
   const leave = () => { cur.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); info.innerHTML = base; };
   svg.addEventListener("pointermove", move);
@@ -553,6 +621,8 @@ function route() {
   }
   const [name, arg] = location.hash.slice(1).split("/").map(decodeURIComponent);
   switch (name) {
+    case "market": return renderMarket();
+    case "mkt": return renderMarketDetail(arg);
     case "watch": return renderWatch();
     case "search": return renderSearch();
     case "settings": return renderSettings();

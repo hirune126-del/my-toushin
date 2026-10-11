@@ -125,3 +125,63 @@ for (const file of await readdir(NAV)) {
   if (file.endsWith(".json") && !keep.has(file)) await unlink(join(NAV, file));
 }
 await writeFile(join(NAV, "index.json"), JSON.stringify([...keep].map((f) => f.replace(".json", "")).sort()));
+
+// ---------- 株価指数・為替（Yahoo Finance） ----------
+// 非公式の取得元のため、失敗しても投信データの公開は止めない
+const MARKETS = [
+  { id: "N225", s: "^N225", name: "日経平均株価", unit: "円", dec: 2 },
+  { id: "DJI", s: "^DJI", name: "NYダウ", unit: "ドル", dec: 2 },
+  { id: "GSPC", s: "^GSPC", name: "S&P500", unit: "", dec: 2 },
+  { id: "IXIC", s: "^IXIC", name: "NASDAQ総合", unit: "", dec: 2 },
+  { id: "SOX", s: "^SOX", name: "SOX指数（半導体）", unit: "", dec: 2 },
+  { id: "USDJPY", s: "JPY=X", name: "米ドル/円", unit: "円", dec: 2 },
+  { id: "EURJPY", s: "EURJPY=X", name: "ユーロ/円", unit: "円", dec: 2 },
+];
+const MKT = join(DATA, "mkt");
+await mkdir(MKT, { recursive: true });
+
+async function fetchMarket(m) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(m.s)}?range=10y&interval=1d`;
+  const res = await withRetry(async () => {
+    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (!j.chart?.result?.[0]) throw new Error("no data");
+    return j.chart.result[0];
+  }, `market ${m.s}`);
+  const off = res.meta.gmtoffset || 0;
+  const day = (t) => new Date((t + off) * 1000).toISOString().slice(0, 10);
+  const weekday = (t) => ![0, 6].includes(new Date((t + off) * 1000).getUTCDay());
+  const close = res.indicators.quote[0].close;
+  const rows = [];
+  res.timestamp.forEach((t, i) => {
+    if (close[i] == null || !weekday(t)) return;
+    const d = day(t), v = Math.round(close[i] * 100) / 100;
+    if (rows.length && rows[rows.length - 1][0] === d) rows[rows.length - 1][1] = v;
+    else rows.push([d, v]);
+  });
+  // 最新値（取引中の場合は現在値）で末尾を更新
+  const { regularMarketPrice: p, regularMarketTime: t } = res.meta;
+  if (p != null && t && weekday(t)) {
+    const d = day(t), v = Math.round(p * 100) / 100;
+    if (rows.length && rows[rows.length - 1][0] === d) rows[rows.length - 1][1] = v;
+    else if (!rows.length || rows[rows.length - 1][0] < d) rows.push([d, v]);
+  }
+  return rows;
+}
+
+const markets = [];
+for (const m of MARKETS) {
+  try {
+    const rows = await fetchMarket(m);
+    if (rows.length < 2) throw new Error("rows < 2");
+    const [d, p] = rows[rows.length - 1], prev = rows[rows.length - 2][1];
+    await writeFile(join(MKT, `${m.id}.json`), JSON.stringify(rows));
+    markets.push({ id: m.id, name: m.name, unit: m.unit, dec: m.dec, p, d, ch: Math.round((p - prev) * 100) / 100, r: Math.round(((p - prev) / prev) * 10000) / 100 });
+    console.log(`mkt/${m.id}.json: ${rows.length} rows  ${m.name} ${p} (${d})`);
+  } catch (e) {
+    console.warn(`取得失敗: ${m.name}: ${e.message}`);
+  }
+  await sleep(500);
+}
+await writeFile(join(DATA, "markets.json"), JSON.stringify({ updated: new Date().toISOString(), markets }));
