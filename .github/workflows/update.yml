@@ -4,7 +4,7 @@ on:
   schedule:
     # 平日の 21:30 と翌朝 7:30（日本時間）に実行。GitHub の混雑で数十分遅れることがあります。
     - cron: "30 12 * * 1-5"
-    - cron: "30 22 * * 1-5"
+    - cron: "30 22 * * *"
   push:
     branches: [main]         # funds.txt やアプリを編集したらすぐ反映
   workflow_dispatch:         # Actions 画面から手動実行も可能
